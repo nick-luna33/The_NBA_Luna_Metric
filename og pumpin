@@ -1,70 +1,51 @@
 import pandas as pd
-import requests
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import playergamelog
 
-# Step 4: Automatically generate the Basketball Reference player ID slug
-def get_bball_ref_slug(name):
-    clean_name = name.strip().lower()
-    parts = clean_name.split()
-    if len(parts) < 2:
-        return None
-    
-    first_name = parts[0]
-    last_name = parts[-1]
-    
-    slug_last = last_name[:5]
-    slug_first = first_name[:2]
-    first_letter = last_name[0]
-    
-    return f"{first_letter}/{slug_last}{slug_first}01"
-
-# Step 5: Fetch Games directly from Basketball Reference HTML (Live Only)
-def get_game_log(player_slug):
-    url = f"https://www.basketball-reference.com/players/{player_slug}/gamelog/2025/"
-    
-    disguise_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    # Request the live page content
-    response = requests.get(url, headers=disguise_headers)
-    
-    if response.status_code != 200:
+# Step 4 & 5: Fetch Games directly from official NBA Database
+def get_game_log_api(player_name):
+    # Find the player's official league ID by their name
+    search_results = players.find_players_by_full_name(player_name)
+    if not search_results:
         return pd.DataFrame()
         
-    # Parse the HTML tables using Pandas
-    tables = pd.read_html(response.text)
+    player_id = search_results[0]['id']
     
-    # Look for the main regular season game log table
-    for table in tables:
-        if 'Opp' in table.columns and 'PTS' in table.columns:
-            # Remove rows that repeat header names mid-table
-            table = table[table['PTS'] != 'PTS']
-            return table
-            
-    return pd.DataFrame()
+    # Query the official NBA game log for the current season
+    # Note: '2025' pulls the 2025-2026 season statistics
+    try:
+        gamelog = playergamelog.PlayerGameLog(player_id=player_id, season='2025')
+        df = gamelog.get_data_frames()[0]
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-# Step 6: Define the Powerhouse Teams
+# Step 6: Define the Powerhouse Teams (NBA API uses 3-letter city abbreviations)
 ELITE_TEAMS = ['BOS', 'OKC', 'NYK', 'DEN', 'MIN', 'MIL', 'CLE', 'DAL']
 
 # Step 7: Sort the Games into Two Buckets
 def split_games(data_frame):
+    if data_frame.empty:
+        return pd.DataFrame(), pd.DataFrame()
+        
     data_frame = data_frame.copy()
-    data_frame['PTS'] = pd.to_numeric(data_frame['PTS'], errors='coerce')
-    data_frame = data_frame.dropna(subset=['PTS'])
     
-    elite_games = data_frame[data_frame['Opp'].isin(ELITE_TEAMS)]
-    regular_games = data_frame[~data_frame['Opp'].isin(ELITE_TEAMS)]
+    # Extract the opposing team from the MATCHUP string (e.g., "LAL @ BOS" or "BOS vs. LAL")
+    # This splits the string and grabs the last 3 characters representing the opponent
+    data_frame['Opponent'] = data_frame['MATCHUP'].apply(lambda x: x.split(' ')[-1])
+    
+    # Ensure points are integers
+    data_frame['PTS'] = pd.to_numeric(data_frame['PTS'], errors='coerce')
+    
+    elite_games = data_frame[data_frame['Opponent'].isin(ELITE_TEAMS)]
+    regular_games = data_frame[~data_frame['Opponent'].isin(ELITE_TEAMS)]
     return elite_games, regular_games
 
 # Step 8 & 9: Create the Main Calculation Function
 def calculate_luna(player_name):
-    slug = get_bball_ref_slug(player_name)
-    if not slug:
-        return None, None, f"Could not parse name format for '{player_name}'."
-        
-    games_df = get_game_log(slug)
+    games_df = get_game_log_api(player_name)
     if games_df.empty:
-        return None, None, f"Could not fetch live 2025 data for {player_name} (Connection blocked or invalid player)."
+        return None, None, f"Could not find or fetch official stats for '{player_name}'."
         
     elite_df, regular_df = split_games(games_df)
     
@@ -74,14 +55,14 @@ def calculate_luna(player_name):
     luna_score = elite_ppg - regular_ppg
     return regular_ppg, elite_ppg, luna_score
 
-# Step 10: Run the Engine in the Terminal
+# Step 10: Run the Engine
 if __name__ == "__main__":
     print("="*40)
-    print("   B-REF LUNA METRIC CALCULATOR         ")
+    print("    OFFICIAL NBA LUNA METRIC ENGINE     ")
     print("="*40)
     
     name_input = input("Enter an NBA Player's Name: ")
-    print(f"\nScraping Basketball Reference for {name_input}... Please wait...")
+    print(f"\nPulling official league data for {name_input}... Please wait...")
     
     reg, elite, luna = calculate_luna(name_input)
     
@@ -89,7 +70,7 @@ if __name__ == "__main__":
         print(f"\nError: {luna}")
     else:
         print("\n" + "-"*40)
-        print(f" RESULTS FOR {name_input.upper()}")
+        print(f" REAL-TIME RESULTS FOR {name_input.upper()}")
         print("-"*40)
         print(f" Regular Teams PPG: {reg:.2f}")
         print(f" Elite Teams PPG:   {elite:.2f}")
