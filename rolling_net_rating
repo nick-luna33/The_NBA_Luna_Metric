@@ -1,1 +1,167 @@
-njnjb
+import sqlite3
+import pandas as pd
+import os
+import warnings
+
+# Hide pandas formatting warnings to keep the terminal clean
+warnings.filterwarnings('ignore')
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(SCRIPT_DIR, "nba_master.db")
+
+def generate_modern_seasons():
+    """Generates a clean list of all modern era seasons and their base IDs"""
+    seasons = []
+    for year in range(1996, 2026):
+        season_name = f"{year}-{str(year+1)[-2:]}"
+        seasons.append((str(year), season_name))
+    return seasons
+
+def run_local_luna(player_name, selected_year=None, selected_season_name="All Career", season_type="Regular", elite_threshold=4.0):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # 1. Look up the player
+    cursor.execute("SELECT player_id, player_name FROM Players WHERE player_name LIKE ?", (f"%{player_name}%",))
+    player_match = cursor.fetchone()
+    
+    if not player_match:
+        conn.close()
+        return f"Could not find a player named '{player_name}' in the local database."
+    
+    player_id, exact_name = player_match
+    
+    # Set NBA API prefixes: '2' for Regular Season, '4' for Playoffs
+    prefix = "2" if season_type == "Regular" else "4"
+    
+    # 2. Build queries with season type filtering
+    if selected_year:
+        target_season_id = f"{prefix}{selected_year}"
+        print(f"\nAnalyzing {exact_name} ({season_type} Season) for the {selected_season_name} season...")
+        query_player_games = """
+            SELECT game_id, season_id, game_date, matchup, pts 
+            FROM Player_Game_Logs 
+            WHERE player_id = ? AND season_id = ?
+            ORDER BY game_date ASC
+        """
+        player_games_df = pd.read_sql_query(query_player_games, conn, params=(player_id, target_season_id))
+    else:
+        print(f"\nAnalyzing {exact_name}'s Entire Historical {season_type} Career...")
+        query_player_games = """
+            SELECT game_id, season_id, game_date, matchup, pts 
+            FROM Player_Game_Logs 
+            WHERE player_id = ? AND season_id LIKE ?
+            ORDER BY game_date ASC
+        """
+        player_games_df = pd.read_sql_query(query_player_games, conn, params=(player_id, f"{prefix}%"))
+    
+    if player_games_df.empty:
+        conn.close()
+        return f"No {season_type} game logs found for {exact_name} in the database for the selected time frame ({selected_season_name})."
+        
+    elite_pts = []
+    regular_pts = []
+    
+    # 3. Process the games locally
+    for _, game in player_games_df.iterrows():
+        season_id = game['season_id']
+        game_date = game['game_date']
+        opp_abbr = game['matchup'].split(' ')[-1]
+        
+        query_opp_history = """
+            SELECT plus_minus 
+            FROM Team_Game_Logs 
+            WHERE team_id = (SELECT team_id FROM Team_Game_Logs WHERE matchup LIKE ? OR matchup LIKE ? LIMIT 1)
+              AND season_id = ? 
+              AND game_date < ?
+        """
+        opp_search_1 = f"{opp_abbr} %"
+        opp_search_2 = f"% @ {opp_abbr}"
+        
+        opp_games = pd.read_sql_query(query_opp_history, conn, params=(opp_search_1, opp_search_2, season_id, game_date))
+        
+        # Early Season Filter: Require at least 5 games of rolling context for baseline
+        # (For playoffs, we drop this to 0 since teams carry their regular season net rating or previous series data)
+        if season_type == "Regular" and len(opp_games) < 5:
+            regular_pts.append(game['pts'])
+            continue
+            
+        rolling_diff = opp_games['plus_minus'].mean() if not opp_games.empty else 0
+        
+        if rolling_diff >= elite_threshold:
+            elite_pts.append(game['pts'])
+        else:
+            regular_pts.append(game['pts'])
+            
+    conn.close()
+    
+    if not elite_pts or not regular_pts:
+        return f"Processed {len(elite_pts) + len(regular_pts)} games, but there wasn't enough split data to compute a LUNA score. Try a different season or 'ALL'."
+        
+    # 4. Math Calculations
+    elite_avg = sum(elite_pts) / len(elite_pts)
+    reg_avg = sum(regular_pts) / len(regular_pts)
+    luna_score = elite_avg - reg_avg
+    
+    return reg_avg, elite_avg, luna_score, len(elite_pts), len(regular_pts), exact_name, selected_season_name, season_type
+
+if __name__ == "__main__":
+    print("="*50)
+    print("      LUNA ENGINE v3.0 (Playoff Toggle)     ")
+    print("="*50)
+    
+    if not os.path.exists(DB_PATH):
+        print("Error: 'nba_master.db' not found. Run your database setups first!")
+    else:
+        name_input = input("Enter an NBA Player's Name: ")
+        
+        # 1. Season Type Selection
+        print("\nSelect Game Type:")
+        print(" [1] Regular Season")
+        print(" [2] Playoffs")
+        type_choice = input("Choice (1 or 2): ").strip()
+        type_str = "Playoffs" if type_choice == "2" else "Regular"
+        
+        # 2. Season Window Selection
+        modern_seasons = generate_modern_seasons()
+        valid_season_names = [s_name for _, s_name in modern_seasons]
+        
+        print("\nAvailable Windows:")
+        print(" Type 'ALL' for complete career history.")
+        print(" Or type a specific season: e.g., 2023-24, 2015-16, 2008-09")
+        
+        while True:
+            season_choice = input("\nSelect Season: ").strip()
+            
+            if season_choice.upper() == "ALL":
+                target_year = None
+                target_name = "All Career"
+                break
+            elif season_choice in valid_season_names:
+                for s_year, s_name in modern_seasons:
+                    if season_choice == s_name:
+                        target_year = s_year
+                        target_name = s_name
+                        break
+                break
+            else:
+                print(f"❌ '{season_choice}' is not recognized. Use YYYY-YY format (e.g., 2023-24).")
+        
+        # Run the dual-mode algorithm
+        result = run_local_luna(name_input, selected_year=target_year, selected_season_name=target_name, season_type=type_str)
+        
+        if isinstance(result, str):
+            print(f"\nError: {result}")
+        else:
+            reg, elite, luna, elite_count, reg_count, clean_name, time_frame, g_type = result
+            print("\n" + "-"*50)
+            print(f" TRUE CONTEXT RESULTS FOR {clean_name.upper()}")
+            print(f" Mode: {g_type.upper()} ({time_frame})")
+            print("-"*50)
+            print(f" Games vs Elite Teams (>= +4.0 Net): {elite_count}")
+            print(f" Games vs Regular Teams:             {reg_count}")
+            print("-"*50)
+            print(f" Regular Teams PPG: {reg:.2f}")
+            print(f" Elite Teams PPG:   {elite:.2f}")
+            print(f" LUNA Score:        {luna:+0.2f}")
+            print("="*50)
