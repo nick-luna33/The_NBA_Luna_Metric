@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUNA Analytics | v2</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; color: #333; max-width: 900px; margin: 40px auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        h1 { color: #1a1a1a; font-size: 2.5em; margin-bottom: 5px; }
+        .search-card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 30px; display: flex; gap: 15px; align-items: flex-end;}
+        .form-group { flex: 1; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; }
+        .button { background: #000; color: white; border: none; padding: 11px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .button:hover { background: #333; }
+        .results-card { background: #1a1a1a; color: white; padding: 30px; border-radius: 12px; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 20px; }
+        .stat-box { background: #2a2a2a; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #444;}
+        .metric-title { color: #888; font-size: 0.8em; text-transform: uppercase; margin-bottom: 10px; letter-spacing: 1px;}
+        .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .vs-item { font-size: 1.2em; font-weight: bold; }
+        .vs-label { font-size: 0.7em; color: #aaa; }
+        
+        /* Table Styles */
+        .receipts { margin-top: 40px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9em; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
+        th { background: #2a2a2a; color: #aaa; text-transform: uppercase; font-size: 0.8em; letter-spacing: 1px; }
+        .highlight { color: #4ade80; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>LUNA Score Engine</h1>
+        <div style="color: #666;">Context-Adjusted Efficiency & Playmaking</div>
+    </div>
+
+    <div class="search-card">
+        <form method="POST" style="display: flex; gap: 15px; width: 100%; align-items: flex-end;">
+            <div class="form-group" style="flex: 2;">
+                <label>Player Name</label>
+                <input type="text" name="player_name" placeholder="e.g. Nikola Jokic" required>
+            </div>
+            <div class="form-group">
+                <label>Season</label>
+                <select name="season_choice">
+                    <option value="ALL">All Career</option>
+                    {% for season_id, season_name in seasons %}
+                        <option value="{{ season_name }}">{{ season_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Type</label>
+                <select name="season_type">
+                    <option value="Regular">Regular</option>
+                    <option value="Playoffs">Playoffs</option>
+                </select>
+            </div>
+            <button type="submit" class="button">Analyze</button>
+        </form>
+    </div>
+
+    {% if error_msg %}
+        <div style="background: #fee2e2; color: #991b1b; padding: 15px; border-radius: 6px;">{{ error_msg }}</div>
+    {% endif %}
+
+    {% if result_data %}
+        <div class="results-card">
+            <h2 style="margin: 0;">{{ result_data.name.upper() }}</h2>
+            <div style="color: #aaa; font-size: 0.9em; margin-top: 5px;">
+                {{ result_data.time_frame }} • {{ result_data.type }} 
+                (Regular: {{ result_data.reg.count }} G | Elite: {{ result_data.elite.count }} G)
+            </div>
+            
+            <div class="stats-grid">
+                <!-- SCORING -->
+                <div class="stat-box">
+                    <div class="metric-title">Points Per Game (PPG)</div>
+                    <div class="vs-grid">
+                        <div>
+                            <div class="vs-item">{{ result_data.reg.ppg }}</div>
+                            <div class="vs-label">REGULAR</div>
+                        </div>
+                        <div>
+                            <div class="vs-item highlight">{{ result_data.elite.ppg }}</div>
+                            <div class="vs-label">ELITE</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- EFFICIENCY -->
+                <div class="stat-box">
+                    <div class="metric-title">True Shooting (TS%)</div>
+                    <div class="vs-grid">
+                        <div>
+                            <div class="vs-item">{{ result_data.reg.ts }}%</div>
+                            <div class="vs-label">REGULAR</div>
+                        </div>
+                        <div>
+                            <div class="vs-item highlight">{{ result_data.elite.ts }}%</div>
+                            <div class="vs-label">ELITE</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PLAYMAKING -->
+                <div class="stat-box">
+                    <div class="metric-title">Total Points Created</div>
+                    <div class="vs-grid">
+                        <div>
+                            <div class="vs-item">{{ result_data.reg.pc }}</div>
+                            <div class="vs-label">REGULAR</div>
+                        </div>
+                        <div>
+                            <div class="vs-item highlight">{{ result_data.elite.pc }}</div>
+                            <div class="vs-label">ELITE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- THE RECEIPTS -->
+            <div class="receipts">
+                <h3 style="margin-bottom: 5px; border-bottom: 1px solid #444; padding-bottom: 10px;">The Receipts (Elite Games)</h3>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table>
+                        <tr>
+                            <th>Date</th>
+                            <th>Opponent</th>
+                            <th>Opp Net Rtg</th>
+                            <th>PTS</th>
+                            <th>AST</th>
+                            <th>FGA</th>
+                        </tr>
+                        {% for game in result_data.receipts %}
+                        <tr>
+                            <td>{{ game.date[:10] }}</td>
+                            <td>{{ game.opp }}</td>
+                            <td style="color: #aaa;">+{{ game.opp_net }}</td>
+                            <td class="highlight">{{ game.pts }}</td>
+                            <td>{{ game.ast }}</td>
+                            <td>{{ game.fga }}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    {% endif %}
+
+</body>
+</html>
