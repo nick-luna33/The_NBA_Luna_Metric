@@ -81,9 +81,8 @@
                 <div class="luna-score-display" style="font-size: 64px; font-weight: 900; color: #4ade80; text-shadow: 0 0 15px rgba(74, 222, 128, 0.15); line-height: 1;">
                     {{ result_data.luna_score }}
                 </div>
-                <!-- UPDATED SUBTITLE FOR V2.0 -->
                 <p style="color: #666; font-size: 12px; margin: 10px 0 0 0; font-style: italic;">
-                    Log-Scaled Volume • Era-Adjusted Efficiency
+                    Log-Scaled Volume • Era-Adjusted Efficiency • True Defense Filtered
                 </p>
             </div>
 
@@ -105,14 +104,14 @@
 
                 <!-- EFFICIENCY -->
                 <div class="stat-box">
-                    <div class="metric-title">True Shooting (TS%)</div>
+                    <div class="metric-title">True Creation (TC%)</div>
                     <div class="vs-grid">
                         <div>
-                            <div class="vs-item">{{ result_data.reg.ts }}%</div>
+                            <div class="vs-item">{{ result_data.reg.tc }}%</div>
                             <div class="vs-label">REGULAR</div>
                         </div>
                         <div>
-                            <div class="vs-item highlight">{{ result_data.elite.ts }}%</div>
+                            <div class="vs-item highlight">{{ result_data.elite.tc }}%</div>
                             <div class="vs-label">ELITE</div>
                         </div>
                     </div>
@@ -142,7 +141,7 @@
                         <tr>
                             <th>Date</th>
                             <th>Opponent</th>
-                            <th>Opp Net Rtg</th>
+                            <th>Def Diff</th>
                             <th>PTS</th>
                             <th>AST</th>
                             <th>FGA</th>
@@ -164,30 +163,29 @@
         </div>
     {% endif %}
 
-    <!-- LUNA Context / Explainer Section -->
+   <!-- LUNA Context / Explainer Section -->
     <div class="luna-context" style="margin-top: 50px; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); color: #333; line-height: 1.6; border: 1px solid #eee;">
-        <h3 style="border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-top: 0; font-size: 1.4em; color: #1a1a1a;">What is the LUNA Score?</h3>
-        <p><strong>LUNA (Lineup Underdog Normalized Activation) v2.0</strong> is an uncompromising, per-possession metric designed to measure a player's true offensive impact strictly against <em>elite</em> NBA defenses.</p>
+        <h3 style="border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-top: 0; font-size: 1.4em; color: #1a1a1a;">What is LUNA Truly Measuring?</h3>
+        <p><strong>LUNA (Lineup Underdog Normalized Activation) v3.5</strong> is an uncompromising analytics engine designed to measure a player's <strong>scalable offensive equity under pressure</strong>. It strips away the noise of raw box scores to answer one specific question: <em>When the defense is elite, the game is competitive, and the ball is in your hands, how much true value do you generate for your team per possession?</em></p>
         
-        <!-- NEW V2.0 Formula Display Box -->
         <div style="background: #f8fafc; padding: 20px; border-radius: 8px; text-align: center; margin: 25px 0; border: 1px dashed #cbd5e1; font-family: 'Courier New', Courier, monospace; font-size: 1.3em; color: #0f172a; font-weight: bold; letter-spacing: 1px;">
-            LUNA<sub>v2.0</sub> = [PC<sub>scaled</sub> &times; Log(Poss)] &times; (1 + &Delta;TS<sub>Era</sub>)<sup>2.5</sup>
+            LUNA<sub>v3.5</sub> = [PC<sub>scaled</sub> &times; Log(Poss)] &times; (1 + &Delta;TC<sub>Era</sub>)<sup>2.5</sup>
         </div>
 
-        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em;">The v2.0 Methodology</h4>
+        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em;">The Equation Broken Down</h4>
         <ul style="margin-top: 0; padding-left: 20px; color: #555;">
-            <li style="margin-bottom: 5px;"><strong>The Elite Filter:</strong> The engine isolates performances solely against top-tier teams, filtering out stats padded against lottery-bound rosters.</li>
-            <li style="margin-bottom: 5px;"><strong>Logarithmic Volume Scaling:</strong> It strips away the inflation of heavy playing time while using a logarithmic curve to reward true offensive anchors and stabilize the volatile spikes of low-minute bench players.</li>
-            <li><strong>Era-Adjusted Multiplier:</strong> It calculates a player's True Shooting differential against the <em>actual league average of that specific season</em>, then applies a smoothed 2.5 exponent. This mathematically rewards hyper-efficiency while strictly penalizing forced, low-quality shots across any era of basketball.</li>
+            <li style="margin-bottom: 8px;"><strong>Standardized Creation (PC<sub>scaled</sub>):</strong> Takes a player's total points scored plus their exact points generated from assists, scaled to a baseline of 20 possessions. This levels the playing field between high-minute starters and low-minute role players.</li>
+            <li style="margin-bottom: 8px;"><strong>The Workload Tax (Log(Poss)):</strong> Maintaining efficiency is exponentially harder at high volume. This logarithmic curve stabilizes the math by penalizing small sample sizes and rewarding superstars who shoulder massive offensive loads without collapsing.</li>
+            <li style="margin-bottom: 8px;"><strong>Era-Adjusted True Creation (&Delta;TC<sub>Era</sub>):</strong> True Creation % improves upon True Shooting by factoring in assists while violently punishing turnovers. The engine dynamically subtracts the specific era's league-average TC% from the player's TC%, ensuring players in the gritty 2000s are judged fairly against players in the modern pace-and-space era.</li>
+            <li><strong>The Smoothed Exponent (2.5):</strong> This multiplier acts as a truth serum. It mathematically obliterates the scores of high-volume, turnover-prone chuckers, while exponentially rewarding hyper-efficient play. The 2.5 curve ensures primary scoring options aren't unfairly punished for drawing double-teams.</li>
         </ul>
 
-        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em; margin-top: 25px;">Why is it Valuable?</h4>
-        <p style="margin-top: 0; color: #555;">In modern basketball, raw box-score totals can be a statistical trap. High-usage players can mask terrible efficiency with sheer volume, while elite role players are frequently undervalued because they take fewer shots. LUNA operates as a truth machine for front offices:</p>
+        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em; margin-top: 25px;">The Environmental Filters</h4>
+        <p style="margin-top: 0; color: #555; margin-bottom: 10px;">LUNA completely ignores games where stats are artificially padded. A game is only passed into the engine if it survives two checks:</p>
         <ul style="margin-top: 0; padding-left: 20px; color: #555;">
-            <li style="margin-bottom: 5px;"><strong>Exposes "Empty Calories":</strong> It identifies volume shooters who actively hurt their team by absorbing possessions inefficiently under playoff-level defensive pressure.</li>
-            <li><strong>Identifies Market Inefficiencies:</strong> It highlights disciplined "analytics darlings" who maximize every sliver of opportunity, proving their game can scale in high-stakes environments.</li>
+            <li style="margin-bottom: 5px;"><strong>The True Defense Filter:</strong> The opponent must have an average Points Allowed rating that is strictly <em>better</em> than the league average up to that point in the season.</li>
+            <li><strong>The "Fake Comeback" Garbage Time Filter:</strong> The engine voids 4th quarter garbage-time padding by throwing out any game where a team was down by 20+ points at the end of the 3rd quarter AND ended up losing by 20+ points.</li>
         </ul>
     </div>
-
 </body>
 </html>
