@@ -24,15 +24,8 @@ CUSTOM_HEADERS = {
     'Connection': 'keep-alive'
 }
 
-# When True, the engine NEVER calls the live NBA API - it only reads from
-# nba_master.db. This makes every query fast (no timeouts) as long as the
-# player/season you're looking for is already in your local database.
-# Set to False later if you want it to try fetching brand-new games live
-# (e.g. once stats.nba.com stops blocking you, or for daily updates).
 OFFLINE_MODE = True
 
-# Each team's primary brand color, used to tint the page background based on
-# whichever team the player most recently played for.
 TEAM_COLORS = {
     1610612737: "#E03A3E",  # Atlanta Hawks
     1610612738: "#007A33",  # Boston Celtics
@@ -65,7 +58,7 @@ TEAM_COLORS = {
     1610612762: "#002B5C",  # Utah Jazz
     1610612764: "#002B5C",  # Washington Wizards
 }
-DEFAULT_TEAM_COLOR = "#1a1a1a"  # fallback if the team can't be identified
+DEFAULT_TEAM_COLOR = "#1a1a1a"
 
 def generate_modern_seasons():
     seasons = []
@@ -129,14 +122,11 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     if OFFLINE_MODE:
         print("  -> Offline mode: skipping live NBA API calls, reading only from your local database.")
     else:
-        # --- SPEED OPTIMIZATION + DYNAMIC CAREER DISCOVERY ---
         if selected_year:
-            # Single season target (Lightning Fast)
             target_year_int = int(selected_year)
             active_seasons = [f"{target_year_int}-{str(target_year_int+1)[-2:]}"]
             print(f"  -> Speed Mode: Only pulling selected target season: {active_seasons[0]}")
         else:
-            # Dynamic Career Mapping using commonplayerinfo
             print("  -> Querying NBA registry for exact career timeframe...")
             try:
                 info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, headers=CUSTOM_HEADERS, timeout=30)
@@ -197,8 +187,6 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
                                       clean_date, row['MATCHUP'], row['PTS'], row['AST'], row['FGA'], row['FTA']))
                             conn.commit()
                             time.sleep(0.4)
-                    else:
-                        pass
         except Exception as e:
             print(f"  -> Network pause handled: {e}")
 
@@ -215,12 +203,10 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
         conn.close()
         return f"No local logs available for {exact_name} ({selected_season_name}). Please ensure your network is connected and click Analyze again."
 
-    # 3. Auto-Heal Missing or Corrupted Team Seasons
     unique_seasons = df['season_id'].unique()
     for sid in unique_seasons:
         cursor.execute("SELECT COUNT(*) FROM Team_Game_Logs WHERE season_id = ?", (sid,))
         count = cursor.fetchone()[0]
-
         is_missing_or_corrupt = (sid.startswith('2') and count < 1000) or (sid.startswith('4') and count < 50)
 
         if is_missing_or_corrupt:
@@ -293,14 +279,39 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     reg_ppg, reg_pc, reg_ts = calculate_advanced(reg_games)
     elite_ppg, elite_pc, elite_ts = calculate_advanced(elite_games)
 
+    # --- NEW: UNBIASED POSSESSION-TERMINATION LUNA SCORE CALCULATION ---
+    # 1. Gather raw volume totals in Elite matchups
+    total_elite_fga = sum(g['fga'] for g in elite_games)
+    total_elite_fta = sum(g['fta'] for g in elite_games)
+    total_elite_ast = sum(g['ast'] for g in elite_games)
+    elite_count = len(elite_games)
+
+    # 2. Calculate average individual possessions used/terminated per game
+    # Formula: FGA + 0.44 * FTA + AST
+    indiv_poss_per_game = (total_elite_fga + (0.44 * total_elite_fta) + total_elite_ast) / elite_count
+
+    if indiv_poss_per_game > 0:
+        # Scale Points Created to a standardized individual possession chunk (e.g., 20 possessions used)
+        pc_scaled = (elite_pc / indiv_poss_per_game) * 20.0
+    else:
+        pc_scaled = 0.0
+
+    # 3. Efficiency Differential vs an Elite Defensive Target baseline (e.g., 54.0% TS%)
+    # elite_ts is extracted out of 100, so we convert the differential to a decimal
+    delta_ts = (elite_ts - 54.0) / 100.0
+
+    # 4. Apply the cubic impact weight
+    master_luna_score = pc_scaled * ((1.0 + delta_ts) ** 3)
+    master_luna_score = round(master_luna_score, 1)
+
     receipts = sorted(elite_games, key=lambda x: x['date'], reverse=True)
 
-    # Use whichever team the player's most recent game (by date) was with
     most_recent_team_id = df.sort_values('game_date').iloc[-1]['team_id']
     team_color = TEAM_COLORS.get(int(most_recent_team_id), DEFAULT_TEAM_COLOR)
 
     return {
         "name": exact_name, "time_frame": selected_season_name, "type": season_type,
+        "luna_score": master_luna_score, # <-- Appended as the master metric payload
         "reg": {"ppg": reg_ppg, "pc": reg_pc, "ts": reg_ts, "count": len(reg_games)},
         "elite": {"ppg": elite_ppg, "pc": elite_pc, "ts": elite_ts, "count": len(elite_games)},
         "receipts": receipts,
