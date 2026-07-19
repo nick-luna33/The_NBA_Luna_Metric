@@ -28,7 +28,7 @@ CUSTOM_HEADERS = {
 OFFLINE_MODE = True
 
 # LUNA v2.0: Historical League Average True Shooting %
-# Used to dynamically normalize efficiency across different eras
+# Still used for the era-normalization step in the Master LUNA Score.
 LEAGUE_TS_MAP = {
     1996: 53.6, 1997: 52.4, 1998: 51.1, 1999: 52.3, 2000: 51.8,
     2001: 52.0, 2002: 51.9, 2003: 51.6, 2004: 52.9, 2005: 53.6,
@@ -52,6 +52,29 @@ TEAM_COLORS = {
 }
 DEFAULT_TEAM_COLOR = "#1a1a1a"
 
+# Minimum sample sizes before we trust a "vs elite defense" read (Regular
+# Season only - Playoffs proceed regardless, matching the site's original
+# behavior of not gating playoff games behind a sample-size requirement).
+MIN_OPPONENT_GAMES = 5
+MIN_LEAGUE_GAMES = 30
+
+# LUNA v3.0: a game is voided from the Elite bucket only if the score
+# differential was ALREADY 20+ points when the 4th quarter began, AND the
+# game still ended with a 20+ point final margin. A game that was close
+# entering the 4th and only pulled away late does NOT count as garbage time.
+GARBAGE_TIME_MARGIN = 20
+
+
+def ensure_column(cursor, table, column, coltype):
+    """Add a column to an existing table only if it's missing - lets the
+    engine run safely even if a migration script hasn't been run yet
+    (the new column will just come back NULL/None, handled gracefully)."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    existing = [row[1] for row in cursor.fetchall()]
+    if column not in existing:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def generate_modern_seasons():
     seasons = []
     for year in range(1996, 2026):
@@ -62,22 +85,31 @@ def remove_accents(input_str):
     return unicodedata.normalize('NFKD', input_str).encode('ASCII', 'ignore').decode('utf-8')
 
 def calculate_advanced(games_list):
+    """LUNA v3.0: True Creation % (TC%) replaces True Shooting % (TS%).
+    The denominator now folds in assists AND turnovers (as well as the
+    original FGA/FTA), and the numerator counts total value created
+    (own points + exact points created via assist) rather than just
+    personal scoring. A high-turnover game actively drags this number
+    down, exactly the way TS% used to only care about shot efficiency."""
     if not games_list:
         return 0, 0, 0
 
     total_pts = sum(g['pts'] for g in games_list)
     total_assist_pts = sum(g.get('assist_pts', 0) or 0 for g in games_list)
+    total_ast = sum(g['ast'] for g in games_list)
     total_fga = sum(g['fga'] for g in games_list)
     total_fta = sum(g['fta'] for g in games_list)
+    total_tov = sum(g.get('tov', 0) or 0 for g in games_list)
     games_count = len(games_list)
 
     ppg = total_pts / games_count
     points_created = ppg + (total_assist_pts / games_count)
 
-    ts_denom = 2 * (total_fga + 0.44 * total_fta)
-    ts_pct = (total_pts / ts_denom * 100) if ts_denom > 0 else 0
+    tc_numerator = total_pts + total_assist_pts
+    tc_denom = 2 * (total_fga + 0.44 * total_fta) + total_ast + total_tov
+    tc_pct = (tc_numerator / tc_denom * 100) if tc_denom > 0 else 0
 
-    return round(ppg, 1), round(points_created, 1), round(ts_pct, 1)
+    return round(ppg, 1), round(points_created, 1), round(tc_pct, 1)
 
 def run_local_luna(player_name, selected_year=None, selected_season_name="All Career", season_type="Regular", elite_threshold=4.0):
     conn = sqlite3.connect(DB_PATH)
@@ -102,6 +134,12 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
             PRIMARY KEY (game_id, player_id)
         )
     ''')
+    # v3.0 columns - added automatically if a migration script hasn't been
+    # run yet, so the app never crashes, it just runs with reduced accuracy
+    # until the migration scripts are run.
+    ensure_column(cursor, "Player_Game_Logs", "tov", "INTEGER")
+    ensure_column(cursor, "Team_Game_Logs", "points_allowed", "INTEGER")
+    ensure_column(cursor, "Team_Game_Logs", "q4_start_margin", "REAL")
     conn.commit()
 
     nba_players = players.get_players()
@@ -189,24 +227,38 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
 
     prefix = "2" if season_type == "Regular" else "4"
 
+    # v3.0: query now also pulls tov (for TC%) and, via a join against
+    # Team_Game_Logs on this exact game_id + the player's own team_id, the
+    # single-game final margin (plus_minus) and Q4-start margin needed for
+    # the refined garbage-time filter.
     if selected_year:
         query = """
-            SELECT p.game_date, p.matchup, p.pts, p.ast, p.fga, p.fta, p.season_id, p.team_id,
-                   COALESCE(a.assist_pts, 0) AS assist_pts
+            SELECT p.game_id, p.game_date, p.matchup, p.pts, p.ast, p.fga, p.fta, p.tov,
+                   p.season_id, p.team_id,
+                   COALESCE(a.assist_pts, 0) AS assist_pts,
+                   t.plus_minus AS final_margin,
+                   t.q4_start_margin AS q4_start_margin
             FROM Player_Game_Logs p
             LEFT JOIN Assist_Points_Created a
                 ON a.game_id = p.game_id AND a.player_id = p.player_id
+            LEFT JOIN Team_Game_Logs t
+                ON t.game_id = p.game_id AND t.team_id = p.team_id
             WHERE p.player_id = ? AND p.season_id = ?
             ORDER BY p.game_date ASC
         """
         df = pd.read_sql_query(query, conn, params=(player_id, f"{prefix}{selected_year}"))
     else:
         query = """
-            SELECT p.game_date, p.matchup, p.pts, p.ast, p.fga, p.fta, p.season_id, p.team_id,
-                   COALESCE(a.assist_pts, 0) AS assist_pts
+            SELECT p.game_id, p.game_date, p.matchup, p.pts, p.ast, p.fga, p.fta, p.tov,
+                   p.season_id, p.team_id,
+                   COALESCE(a.assist_pts, 0) AS assist_pts,
+                   t.plus_minus AS final_margin,
+                   t.q4_start_margin AS q4_start_margin
             FROM Player_Game_Logs p
             LEFT JOIN Assist_Points_Created a
                 ON a.game_id = p.game_id AND a.player_id = p.player_id
+            LEFT JOIN Team_Game_Logs t
+                ON t.game_id = p.game_id AND t.team_id = p.team_id
             WHERE p.player_id = ? AND p.season_id LIKE ?
             ORDER BY p.game_date ASC
         """
@@ -255,31 +307,60 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     elite_games = []
     reg_games = []
 
-    print("  -> Splitting stats across team strength matrix slices...")
+    print("  -> Splitting stats across team strength matrix slices (v3.0 True Defense Filter)...")
     for _, game in df.iterrows():
         p_date = game['game_date']
         opp_abbr = game['matchup'].split(' ')[-1]
 
+        # --- v3.0 TRUE DEFENSE FILTER ---
+        # Opponent's own points-allowed history up to this point in the season
         opp_query = """
-            SELECT plus_minus FROM Team_Game_Logs
+            SELECT points_allowed FROM Team_Game_Logs
             WHERE team_id = (SELECT team_id FROM Team_Game_Logs WHERE matchup LIKE ? LIMIT 1)
-              AND season_id = ? AND game_date < ?
+              AND season_id = ? AND game_date < ? AND points_allowed IS NOT NULL
         """
         opp_games = pd.read_sql_query(opp_query, conn, params=(f"{opp_abbr} %", game['season_id'], p_date))
 
-        if season_type == "Regular" and len(opp_games) < 5:
+        # League-wide points-allowed baseline at this same point in the season
+        league_query = """
+            SELECT points_allowed FROM Team_Game_Logs
+            WHERE season_id = ? AND game_date < ? AND points_allowed IS NOT NULL
+        """
+        league_games = pd.read_sql_query(league_query, conn, params=(game['season_id'], p_date))
+
+        insufficient_sample = (
+            season_type == "Regular"
+            and (len(opp_games) < MIN_OPPONENT_GAMES or len(league_games) < MIN_LEAGUE_GAMES)
+        )
+
+        if insufficient_sample or league_games.empty or opp_games.empty:
             reg_games.append(game)
             continue
 
-        rolling_diff = opp_games['plus_minus'].mean() if not opp_games.empty else 0
+        opponent_avg_allowed = opp_games['points_allowed'].mean()
+        league_avg_allowed = league_games['points_allowed'].mean()
+        def_diff = round(league_avg_allowed - opponent_avg_allowed, 1)  # positive = tougher-than-average defense
+        is_elite_defense = opponent_avg_allowed < league_avg_allowed
+
+        # --- v3.0 REFINED GARBAGE-TIME FILTER ---
+        # Only voids the game from the Elite bucket if it was ALREADY a 20+
+        # point game entering the 4th quarter AND still ended 20+.
+        q4_margin = game.get('q4_start_margin')
+        final_margin = game.get('final_margin')
+        is_blowout = (
+            pd.notna(q4_margin) and pd.notna(final_margin)
+            and abs(q4_margin) >= GARBAGE_TIME_MARGIN
+            and abs(final_margin) >= GARBAGE_TIME_MARGIN
+        )
 
         game_dict = {
             'date': p_date, 'opp': opp_abbr, 'pts': game['pts'],
             'ast': game['ast'], 'fga': game['fga'], 'fta': game['fta'],
-            'assist_pts': game['assist_pts'], 'opp_net': round(rolling_diff, 1)
+            'tov': game.get('tov', 0), 'assist_pts': game['assist_pts'],
+            'opp_net': def_diff
         }
 
-        if rolling_diff >= elite_threshold:
+        if is_elite_defense and not is_blowout:
             elite_games.append(game_dict)
         else:
             reg_games.append(game_dict)
@@ -290,11 +371,11 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     if not elite_games or not reg_games:
         return f"Calculated {len(elite_games) + len(reg_games)} total games, but 0 met context parameters. Try refreshing to settle background processes."
 
-    reg_ppg, reg_pc, reg_ts = calculate_advanced(reg_games)
-    elite_ppg, elite_pc, elite_ts = calculate_advanced(elite_games)
+    reg_ppg, reg_pc, reg_tc = calculate_advanced(reg_games)
+    elite_ppg, elite_pc, elite_tc = calculate_advanced(elite_games)
 
     # =====================================================================
-    # --- LUNA v2.0: UNBIASED POSSESSION-TERMINATION SCORE CALCULATION ---
+    # --- LUNA v2.0/v3.0: UNBIASED POSSESSION-TERMINATION SCORE CALCULATION ---
     # =====================================================================
     total_elite_fga = sum(g['fga'] for g in elite_games)
     total_elite_fta = sum(g['fta'] for g in elite_games)
@@ -304,28 +385,22 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     indiv_poss_per_game = (total_elite_fga + (0.44 * total_elite_fta) + total_elite_ast) / elite_count
 
     if indiv_poss_per_game > 0:
-        # 1. LOGARITHMIC VOLUME STABILIZATION
-        # Rewards players who handle massive loads without artificially inflating low-minute role players.
         volume_stabilizer = math.log(indiv_poss_per_game + 1) / math.log(21)
         pc_scaled = (elite_pc / indiv_poss_per_game) * 20.0 * volume_stabilizer
     else:
         pc_scaled = 0.0
 
-    # 2. ERA NORMALIZATION
-    # Find the dominant year from the player's dataset to look up the correct historical TS%
     try:
         primary_season_str = str(df['season_id'].mode()[0])
-        # '22023' -> 2023
         year_int = int(primary_season_str[1:5])
     except:
         year_int = 2024
-        
-    era_avg_ts = LEAGUE_TS_MAP.get(year_int, 56.0)
-    delta_ts = (elite_ts - era_avg_ts) / 100.0
 
-    # 3. SMOOTHED CUBIC EXPONENT
-    # Reduced from 3.0 to 2.5. Still violently punishes chuckers, but doesn't mathematically obliterate star players.
-    master_luna_score = pc_scaled * ((1.0 + delta_ts) ** 2.5)
+    era_avg_ts = LEAGUE_TS_MAP.get(year_int, 56.0)
+    # v3.0: uses the new TC% instead of the old TS% for the efficiency delta
+    delta_tc = (elite_tc - era_avg_ts) / 100.0
+
+    master_luna_score = pc_scaled * ((1.0 + delta_tc) ** 2.5)
     master_luna_score = round(master_luna_score, 1)
 
     receipts = sorted(elite_games, key=lambda x: x['date'], reverse=True)
@@ -336,8 +411,8 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
     return {
         "name": exact_name, "time_frame": selected_season_name, "type": season_type,
         "luna_score": master_luna_score,
-        "reg": {"ppg": reg_ppg, "pc": reg_pc, "ts": reg_ts, "count": len(reg_games)},
-        "elite": {"ppg": elite_ppg, "pc": elite_pc, "ts": elite_ts, "count": len(elite_games)},
+        "reg": {"ppg": reg_ppg, "pc": reg_pc, "tc": reg_tc, "count": len(reg_games)},
+        "elite": {"ppg": elite_ppg, "pc": elite_pc, "tc": elite_tc, "count": len(elite_games)},
         "receipts": receipts,
         "team_color": team_color,
     }
