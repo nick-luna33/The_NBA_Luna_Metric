@@ -31,6 +31,42 @@ CUSTOM_HEADERS = {
 # (e.g. once stats.nba.com stops blocking you, or for daily updates).
 OFFLINE_MODE = True
 
+# Each team's primary brand color, used to tint the page background based on
+# whichever team the player most recently played for.
+TEAM_COLORS = {
+    1610612737: "#E03A3E",  # Atlanta Hawks
+    1610612738: "#007A33",  # Boston Celtics
+    1610612751: "#000000",  # Brooklyn Nets
+    1610612766: "#1D1160",  # Charlotte Hornets
+    1610612741: "#CE1141",  # Chicago Bulls
+    1610612739: "#860038",  # Cleveland Cavaliers
+    1610612742: "#00538C",  # Dallas Mavericks
+    1610612743: "#0E2240",  # Denver Nuggets
+    1610612765: "#C8102E",  # Detroit Pistons
+    1610612744: "#1D428A",  # Golden State Warriors
+    1610612745: "#CE1141",  # Houston Rockets
+    1610612754: "#002D62",  # Indiana Pacers
+    1610612746: "#C8102E",  # LA Clippers
+    1610612747: "#552583",  # Los Angeles Lakers
+    1610612763: "#5D76A9",  # Memphis Grizzlies
+    1610612748: "#98002E",  # Miami Heat
+    1610612749: "#00471B",  # Milwaukee Bucks
+    1610612750: "#0C2340",  # Minnesota Timberwolves
+    1610612740: "#0C2340",  # New Orleans Pelicans
+    1610612752: "#006BB6",  # New York Knicks
+    1610612760: "#007AC1",  # Oklahoma City Thunder
+    1610612753: "#0077C0",  # Orlando Magic
+    1610612755: "#006BB6",  # Philadelphia 76ers
+    1610612756: "#E56020",  # Phoenix Suns
+    1610612757: "#E03A3E",  # Portland Trail Blazers
+    1610612758: "#5A2D81",  # Sacramento Kings
+    1610612759: "#000000",  # San Antonio Spurs
+    1610612761: "#CE1141",  # Toronto Raptors
+    1610612762: "#002B5C",  # Utah Jazz
+    1610612764: "#002B5C",  # Washington Wizards
+}
+DEFAULT_TEAM_COLOR = "#1a1a1a"  # fallback if the team can't be identified
+
 def generate_modern_seasons():
     seasons = []
     for year in range(1996, 2026):
@@ -43,25 +79,25 @@ def remove_accents(input_str):
 def calculate_advanced(games_list):
     if not games_list:
         return 0, 0, 0
-    
+
     total_pts = sum(g['pts'] for g in games_list)
     total_ast = sum(g['ast'] for g in games_list)
     total_fga = sum(g['fga'] for g in games_list)
     total_fta = sum(g['fta'] for g in games_list)
     games_count = len(games_list)
-    
+
     ppg = total_pts / games_count
     points_created = ppg + ((total_ast / games_count) * 2.5)
-    
+
     ts_denom = 2 * (total_fga + 0.44 * total_fta)
     ts_pct = (total_pts / ts_denom * 100) if ts_denom > 0 else 0
-    
+
     return round(ppg, 1), round(points_created, 1), round(ts_pct, 1)
 
 def run_local_luna(player_name, selected_year=None, selected_season_name="All Career", season_type="Regular", elite_threshold=4.0):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS Player_Game_Logs (
             game_id TEXT, player_id INTEGER, player_name TEXT, team_id INTEGER,
@@ -76,20 +112,20 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
         )
     ''')
     conn.commit()
-    
+
     nba_players = players.get_players()
     clean_search = remove_accents(player_name).lower()
     match = [p for p in nba_players if clean_search in remove_accents(p['full_name']).lower()]
-    
+
     if not match:
         conn.close()
         return f"Could not find '{player_name}' in the NBA registry."
-        
+
     player_id = match[0]['id']
     exact_name = match[0]['full_name']
-    
+
     print(f"\n[LUNA ENGINE] Evaluating data state for: {exact_name} (ID: {player_id})")
-    
+
     if OFFLINE_MODE:
         print("  -> Offline mode: skipping live NBA API calls, reading only from your local database.")
     else:
@@ -165,28 +201,28 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
                         pass
         except Exception as e:
             print(f"  -> Network pause handled: {e}")
-        
+
     prefix = "2" if season_type == "Regular" else "4"
-    
+
     if selected_year:
-        query = "SELECT game_date, matchup, pts, ast, fga, fta, season_id FROM Player_Game_Logs WHERE player_id = ? AND season_id = ? ORDER BY game_date ASC"
+        query = "SELECT game_date, matchup, pts, ast, fga, fta, season_id, team_id FROM Player_Game_Logs WHERE player_id = ? AND season_id = ? ORDER BY game_date ASC"
         df = pd.read_sql_query(query, conn, params=(player_id, f"{prefix}{selected_year}"))
     else:
-        query = "SELECT game_date, matchup, pts, ast, fga, fta, season_id FROM Player_Game_Logs WHERE player_id = ? AND season_id LIKE ? ORDER BY game_date ASC"
+        query = "SELECT game_date, matchup, pts, ast, fga, fta, season_id, team_id FROM Player_Game_Logs WHERE player_id = ? AND season_id LIKE ? ORDER BY game_date ASC"
         df = pd.read_sql_query(query, conn, params=(player_id, f"{prefix}%"))
-    
+
     if df.empty:
         conn.close()
         return f"No local logs available for {exact_name} ({selected_season_name}). Please ensure your network is connected and click Analyze again."
-        
+
     # 3. Auto-Heal Missing or Corrupted Team Seasons
     unique_seasons = df['season_id'].unique()
     for sid in unique_seasons:
         cursor.execute("SELECT COUNT(*) FROM Team_Game_Logs WHERE season_id = ?", (sid,))
         count = cursor.fetchone()[0]
-        
+
         is_missing_or_corrupt = (sid.startswith('2') and count < 1000) or (sid.startswith('4') and count < 50)
-        
+
         if is_missing_or_corrupt:
             if OFFLINE_MODE:
                 print(f"  -> Offline mode: season {sid} has limited team data locally, using what's available.")
@@ -216,52 +252,57 @@ def run_local_luna(player_name, selected_year=None, selected_season_name="All Ca
                     time.sleep(1.0)
                 except Exception as e:
                     print(f"  -> [!] Team log rebuild failed for season {sid}: {e}")
-                
+
     elite_games = []
     reg_games = []
-    
+
     print("  -> Splitting stats across team strength matrix slices...")
     for _, game in df.iterrows():
         p_date = game['game_date']
         opp_abbr = game['matchup'].split(' ')[-1]
-        
+
         opp_query = """
-            SELECT plus_minus FROM Team_Game_Logs 
+            SELECT plus_minus FROM Team_Game_Logs
             WHERE team_id = (SELECT team_id FROM Team_Game_Logs WHERE matchup LIKE ? LIMIT 1)
               AND season_id = ? AND game_date < ?
         """
         opp_games = pd.read_sql_query(opp_query, conn, params=(f"{opp_abbr} %", game['season_id'], p_date))
-        
+
         if season_type == "Regular" and len(opp_games) < 5:
             reg_games.append(game)
             continue
-            
+
         rolling_diff = opp_games['plus_minus'].mean() if not opp_games.empty else 0
-        
+
         game_dict = {
-            'date': p_date, 'opp': opp_abbr, 'pts': game['pts'], 
+            'date': p_date, 'opp': opp_abbr, 'pts': game['pts'],
             'ast': game['ast'], 'fga': game['fga'], 'fta': game['fta'], 'opp_net': round(rolling_diff, 1)
         }
-        
+
         if rolling_diff >= elite_threshold:
             elite_games.append(game_dict)
         else:
             reg_games.append(game_dict)
-            
+
     conn.close()
     print("[LUNA ENGINE] Computation cycle completed successfully.\n")
-    
+
     if not elite_games or not reg_games:
         return f"Calculated {len(elite_games) + len(reg_games)} total games, but 0 met context parameters. Try refreshing to settle background processes."
-        
+
     reg_ppg, reg_pc, reg_ts = calculate_advanced(reg_games)
     elite_ppg, elite_pc, elite_ts = calculate_advanced(elite_games)
-    
+
     receipts = sorted(elite_games, key=lambda x: x['date'], reverse=True)
-    
+
+    # Use whichever team the player's most recent game (by date) was with
+    most_recent_team_id = df.sort_values('game_date').iloc[-1]['team_id']
+    team_color = TEAM_COLORS.get(int(most_recent_team_id), DEFAULT_TEAM_COLOR)
+
     return {
         "name": exact_name, "time_frame": selected_season_name, "type": season_type,
         "reg": {"ppg": reg_ppg, "pc": reg_pc, "ts": reg_ts, "count": len(reg_games)},
         "elite": {"ppg": elite_ppg, "pc": elite_pc, "ts": elite_ts, "count": len(elite_games)},
-        "receipts": receipts
+        "receipts": receipts,
+        "team_color": team_color,
     }
