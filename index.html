@@ -34,7 +34,7 @@
 
     <div class="header">
         <h1>LUNA Score Engine</h1>
-        <div style="color: #666;">Context-Adjusted Efficiency & Playmaking</div>
+        <div style="color: #666;">Lineup Underdog Normalized Activation</div>
     </div>
 
     <div class="search-card">
@@ -68,13 +68,25 @@
     {% endif %}
 
     {% if result_data %}
-        <div class="results-card">
+        <!-- Added dynamic team color top border here -->
+        <div class="results-card" style="border-top: 5px solid {{ result_data.team_color }};">
             <h2 style="margin: 0;">{{ result_data.name.upper() }}</h2>
             <div style="color: #aaa; font-size: 0.9em; margin-top: 5px;">
                 {{ result_data.time_frame }} • {{ result_data.type }} 
                 (Regular: {{ result_data.reg.count }} G | Elite: {{ result_data.elite.count }} G)
             </div>
             
+            <!-- NEW: Master LUNA Score Card -->
+            <div class="luna-master-card" style="background: #111; padding: 25px; border-radius: 12px; margin: 25px 0 20px 0; text-align: center; border: 1px solid #333; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                <h3 style="color: #888; font-size: 13px; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">Master LUNA Score</h3>
+                <div class="luna-score-display" style="font-size: 64px; font-weight: 900; color: #4ade80; text-shadow: 0 0 15px rgba(74, 222, 128, 0.15); line-height: 1;">
+                    {{ result_data.luna_score }}
+                </div>
+                <p style="color: #666; font-size: 12px; margin: 10px 0 0 0; font-style: italic;">
+                    Per-Possession Termination • Cubic Efficiency Adjusted
+                </p>
+            </div>
+
             <div class="stats-grid">
                 <!-- SCORING -->
                 <div class="stat-box">
@@ -151,6 +163,26 @@
 
         </div>
     {% endif %}
+
+<!-- LUNA Context / Explainer Section -->
+    <div class="luna-context" style="margin-top: 50px; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); color: #333; line-height: 1.6; border: 1px solid #eee;">
+        <h3 style="border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-top: 0; font-size: 1.4em; color: #1a1a1a;">What is the LUNA Score?</h3>
+        <p><strong>LUNA (Lineup Underdog Normalized Activation)</strong> is an uncompromising, per-possession metric designed to measure a player's true offensive impact strictly against <em>elite</em> NBA defenses.</p>
+        
+        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em;">The Methodology</h4>
+        <ul style="margin-top: 0; padding-left: 20px; color: #555;">
+            <li style="margin-bottom: 5px;"><strong>The Elite Filter:</strong> The engine isolates performances solely against top-tier defensive teams, filtering out stats padded against lottery-bound rosters.</li>
+            <li style="margin-bottom: 5px;"><strong>Per-Possession Scaling:</strong> It strips away the inflation of heavy playing time by scaling every player's total offensive creation (Points + Points off Assists) to a standardized per-possession rate.</li>
+            <li><strong>Cubic Efficiency Multiplier:</strong> It calculates a player's True Shooting differential against the elite defensive baseline and applies a cubic exponent, mathematically rewarding hyper-efficiency while violently penalizing forced, low-quality shots.</li>
+        </ul>
+
+        <h4 style="margin-bottom: 8px; color: #1a1a1a; font-size: 1.1em; margin-top: 25px;">Why is it Valuable?</h4>
+        <p style="margin-top: 0; color: #555;">In modern basketball, raw box-score totals can be a statistical trap. High-usage players can mask terrible efficiency with sheer volume, while elite role players are frequently undervalued because they take fewer shots. LUNA operates as a truth machine for front offices:</p>
+        <ul style="margin-top: 0; padding-left: 20px; color: #555;">
+            <li style="margin-bottom: 5px;"><strong>Exposes "Empty Calories":</strong> It identifies volume shooters who actively hurt their team by absorbing possessions inefficiently under playoff-level defensive pressure.</li>
+            <li><strong>Identifies Market Inefficiencies:</strong> It highlights disciplined "analytics darlings" who maximize every sliver of opportunity, proving their game can scale in high-stakes environments.</li>
+        </ul>
+    </div>
 
 </body>
 </html>
